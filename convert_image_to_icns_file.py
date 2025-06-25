@@ -12,46 +12,38 @@ Converts an image to icns file.  Replaces the xcode icon composer and simplifies
 __author__ = "thedzy"
 __copyright__ = "Copyright 2020, thedzy"
 __license__ = "GPL"
-__version__ = "1.0"
+__version__ = "1.0.1"
 __maintainer__ = "thedzy"
 __email__ = "thedzy@hotmail.com"
 __status__ = "Developer"
 
-import optparse
-import os
+import argparse
 import subprocess
+import tempfile
+from pathlib import Path
 
 from PIL import Image
 
 
-def main():
+def main() -> int:
     """
     Convert image to icns file
-    :return: (void)
+    :return: return code
     """
 
-    # Check that the png exists
-    if os.path.isfile(options.infile):
-        image_name = os.path.basename(options.infile).split('.')[0]
-    else:
-        print('File {} does not exist, please check the path'.format(options.infile))
-        return 1
-
     if options.outfile is None:
-        options.outfile = os.path.join(os.path.dirname(options.infile), os.path.basename(options.infile).split('.')[0] + b'.icns')
-    else:
-        if not os.path.exists(os.path.dirname(options.outfile)):
-            print('Check out file path')
+        input_file_parent: Path = Path(options.infile).parent
+        input_file_name: str = Path(options.infile).stem
+        options.outfile = input_file_parent / f'{input_file_name}.icns'
 
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    temp_path = '/tmp/{}.iconset'.format(image_name)
-    temp_file = '/tmp/{}.icns'.format(image_name)
-    os.makedirs(temp_path, exist_ok=True)
-    os.chdir(base_path)
+    temp_dir: Path = Path(tempfile.TemporaryDirectory().name)
+    temp_path: Path = temp_dir / f'{Path(options.infile).stem}.iconset'
+    temp_file: Path = temp_dir / f'{Path(options.infile).stem}.icns'
+    temp_path.mkdir(parents=True, exist_ok=True)
 
     # Files that need to be created
     # (name, size and scale)
-    icon_files = [
+    icon_files: list[tuple[str, int, int]] = [
         ('icon_16x16.png', 16, 1),
         ('icon_16x16@2x.png', 16, 2),
         ('icon_32x32.png', 32, 1),
@@ -76,124 +68,149 @@ def main():
     # Create all the resized images
     with Image.open(options.infile) as image:
         # Convert to image with Alpha
-        image = image.convert('RGBA')
+        image: Image.Image = image.convert('RGBA')
 
         # Pad image to prevent needing to crop or stretch
         image_width, image_height = image.size
         if image_width != image_height and options.keep_aspect:
             print('Padding image')
-            max_size = max(image_width, image_height)
+            max_size: int = max(image_width, image_height)
             blank_image = Image.new('RGBA', (max_size, max_size), 0)
             if image_width > image_height:
-                image_size_differnce = int((image_width - image_height) / 2)
-                blank_image.paste(image, (0, image_size_differnce))
+                image_size_difference: int = int(
+                    (image_width - image_height) / 2)
+                blank_image.paste(image, (0, image_size_difference))
             else:
-                image_size_differnce = int((image_height - image_width) / 2)
-                blank_image.paste(image, (image_size_differnce, 0))
-            image = blank_image
+                image_size_difference: int = int(
+                    (image_height - image_width) / 2)
+                blank_image.paste(image, (image_size_difference, 0))
+            image: Image.Image = blank_image
 
         # Crop image image
         image_width, image_height = image.size
         if image_width != image_height and options.crop:
             print('Cropping image')
-            min_size = min(image_width, image_height)
-            print(min_size)
+            min_size: int = min(image_width, image_height)
             if image_width == min_size:
-                resized_image = image.crop((0, (image_height - image_width) / 2, min_size, ((image_height - image_width) / 2) + min_size))
+                resized_image = image.crop((
+                    0,
+                    (image_height - image_width) / 2,
+                    min_size,
+                    ((image_height - image_width) / 2) + min_size
+                ))
             else:
                 print((image_width - image_height) / 2)
                 print(image_width, image_height)
-                resized_image = image.crop(((image_width - image_height) / 2, 0, ((image_width - image_height) / 2) + min_size, min_size))
-            image = resized_image
+                resized_image: Image.Image = image.crop((
+                    (image_width - image_height) / 2, 0,
+                    ((image_width - image_height) / 2) + min_size, min_size
+                ))
+            image: Image.Image = resized_image
 
         image_width, _ = image.size
 
-        last_size = 0
+        last_size: int = 0
         for icon_file in icon_files:
-            name = icon_file[0]
-            size = icon_file[1]
-            multiplier = icon_file[2]
+            name: str = icon_file[0]
+            size: int = icon_file[1]
+            multiplier: int = icon_file[2]
 
             # Scale for retina
-            adjusted_size = size * multiplier
+            adjusted_size: int = size * multiplier
 
             if image_width > last_size or options.all_sizes:
-                last_size = size
+                last_size: int = size
 
-                print('Processed: {}'.format(name))
-                new_image = image.copy()
-                new_image = new_image.resize((adjusted_size, adjusted_size), resize_methods.get(options.method, 0))
-                new_image.save(os.path.join(temp_path, name), "PNG")
+                print(f'Processed: {name}')
+                new_image: Image.Image = image.copy()
+                new_image: Image.Image = new_image.resize(
+                    (adjusted_size, adjusted_size), resize_methods.get(options.method, 0))
+                new_image.save(temp_path / name, "PNG")
 
     # Convert using iconutil
-    binary = '/usr/bin/iconutil'
-    if os.path.isfile(binary):
-        # Shell command
-        command = '{0} -c icns {1}'.format(binary, temp_path)
+    if options.binary.is_file():
+        options.outfile.unlink(missing_ok=True)  # Remove old file if it exists
+        command: list[str] = [
+            options.binary.as_posix(), '-c', 'icns', temp_path.as_posix()
+        ]
 
         # Run the command and return results
         try:
-            process_info = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
-        except AttributeError:
-            process_info = subprocess.popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+            process_info: subprocess.CompletedProcess = subprocess.run(
+                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
         except ValueError as err:
             print(err)
             return 2
 
         if process_info.returncode == 0:
-            print('Creating file: {}'.format(options.outfile))
-            os.rename(temp_file, options.outfile)
+            print(f'Creating file: {options.outfile.absolute()}')
+            temp_file.rename(options.outfile)
         else:
-            print('Error creating file, error {}'.format(process_info.returncode))
+            print(f'Error creating file, error {process_info.returncode} with {options.binary}')
             return process_info.returncode
     else:
-        print('Please install {}'.format(binary))
+        print(f'Please install {options.binary.stem}')
 
     print('Done')
     return 0
 
 
 if __name__ == '__main__':
+    def valid_path(path):
+        parent: Path = Path(path).parent
+        if not parent.is_dir():
+            print(f'{parent} is not a directory, make it?', end=' ')
+            if input('y/n: ').lower()[0] == 'y':
+                parent.mkdir(parents=True, exist_ok=True)
+                return Path(path)
+            raise argparse.ArgumentTypeError(f'{path} is an invalid path')
+        return Path(path)
 
-    # Create the parser and give it the program version #
-    parser = optparse.OptionParser('%prog [options]\n %prog will take an image and save it to Apple icns file.',
-                                   version='%prog 1.0')
 
-    # input file
-    parser.add_option('-i', '--infile',
-                      action='store', dest='infile', default=None,
-                      help='Image file, required')
+    # Create argument parser
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        description='%prog [options]\n %prog will take an image and save it to Apple icns file.')
+    parser.add_argument('-v', '--version', action='version',
+                        version='%(prog)s ' + __version__)
+
+    # Input file, required
+    parser.add_argument('-i', '--infile', type=valid_path,
+                        action='store', dest='infile',
+                        required=True,
+                        help='image file, required')
 
     # output file, assumed if missing
-    parser.add_option('-o', '--outfile',
-                      action='store', dest='outfile', default=None,
-                      help='Icns file, optional. Default: Same as infile and icns extension')
+    parser.add_argument('-o', '--outfile', type=valid_path, default=None,
+                        action='store', dest='outfile',
+                        help='icns file, optional. Default: Same as infile and icns extension')
+
+    # binary path of iconutil
+    parser.add_argument('-b', '--binaary', type=valid_path, default=Path('/usr/bin/iconutil'),
+                        action='store', dest='binary',
+                        help='path of iconutil')
 
     # crop image?
-    parser.add_option('-c', '--crop',
-                      action='store_true', dest='crop', default=False,
-                      help='Crop image when resizing')
+    parser.add_argument('-c', '--crop', default=False,
+                        action='store_true', dest='crop',
+                        help='crop image when resizing')
 
     # Maintain aspect ratio?
-    parser.add_option('-k', '--keep_aspect',
-                      action='store_true', dest='keep_aspect', default=False,
-                      help='When resizing keep aspect ratio')
+    parser.add_argument('-k', '--keep_aspect', default=False,
+                        action='store_true', dest='keep_aspect',
+                        help='when resizing keep aspect ratio')
 
     # Scaling mathod
-    parser.add_option('-m', '--method',
-                      action='store', type='choice', dest='method', default='ANTIALIAS',
-                      choices=('NEAREST', 'BILINEAR', 'BICUBIC', 'LANCZOS', 'ANTIALIAS'),
-                      help='Method to use. Valid choices are {}. Default: {}'.format(('NEAREST', 'BILINEAR', 'BICUBIC', 'LANCZOS', 'ANTIALIAS'), 'ANTIALIAS'))
+    parser.add_argument('-m', '--method', default='ANTIALIAS',
+                        action='store', dest='method',
+                        choices=('NEAREST', 'BILINEAR', 'BICUBIC',
+                                 'LANCZOS', 'ANTIALIAS'),
+                        help='method to use. Valid choices are {}. Default: {}'.format(('NEAREST', 'BILINEAR', 'BICUBIC', 'LANCZOS', 'ANTIALIAS'), 'ANTIALIAS'))
 
     # Maintain aspect ratio?
-    parser.add_option('-a', '--allsizes',
-                      action='store_true', dest='all_sizes', default=False,
-                      help='When scaling, scale up to all sizes.  Not recommended')
+    parser.add_argument('-a', '--allsizes', default=False,
+                        action='store_true', dest='all_sizes',
+                        help='when scaling, scale up to all sizes.  Not recommended')
 
-    options, args = parser.parse_args()
-
-    if options.infile is None:
-        parser.print_help()
-        exit(128)
+    options: argparse.Namespace = parser.parse_args()
 
     exit(main())
